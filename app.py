@@ -1,9 +1,11 @@
+from turtle import distance
+
 import cv2
 import time
 import tkinter as tk
 from PIL import Image, ImageTk
-import matplotlib.pyplot as plt
-
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+from matplotlib.figure import Figure
 from milestone1 import HandDetector
 from milestone2 import GestureRecognizer
 from milestone3 import VolumeController
@@ -104,6 +106,21 @@ class GestureApp:
         self.scrollbar.pack(side="right", fill="y")
 
         # ===== CARDS =====
+
+        # Controls Card
+        control_card = self.create_card("Camera Controls")
+
+        tk.Button(control_card, text="Start Camera",
+                  bg="#00bfff", relief="flat",
+                  command=self.start_camera).pack(fill="x", pady=5)
+
+        tk.Button(control_card, text="Stop Camera",
+                  bg="#ff4444", relief="flat",
+                  command=self.stop_camera).pack(fill="x", pady=5)
+
+        tk.Button(control_card, text="Capture",
+                  bg="#00ffcc", relief="flat",
+                  command=self.capture_image).pack(fill="x", pady=5)
 
         # Detection Card
         status_card = self.create_card("Detection Status")
@@ -210,28 +227,47 @@ class GestureApp:
         # Analytics Card
         analytics_card = self.create_card("Analytics")
 
-        tk.Button(analytics_card, text="Show Mapping Graph",
-                  bg="#ffaa00", relief="flat",
-                  command=self.show_mapping_graph).pack(fill="x", pady=5)
+        # ===== Mapping Graph =====
+        self.fig_mapping = Figure(figsize=(3.5, 2.5), dpi=100)
+        self.ax_mapping = self.fig_mapping.add_subplot(111)
 
-        tk.Button(analytics_card, text="Show Volume History",
-                  bg="#00cc99", relief="flat",
-                  command=self.show_history_graph).pack(fill="x", pady=5)
+        self.mapping_canvas = FigureCanvasTkAgg(self.fig_mapping, analytics_card)
+        self.mapping_canvas.get_tk_widget().pack(fill="both", padx=10, pady=5)
 
-        # Controls Card
-        control_card = self.create_card("Camera Controls")
+        # Initial Mapping Graph (before camera starts)
+        self.ax_mapping.set_title("Distance → Volume")
+        self.ax_mapping.set_xlabel("Distance (%)")
+        self.ax_mapping.set_ylabel("Volume (%)")
 
-        tk.Button(control_card, text="Start Camera",
-                  bg="#00bfff", relief="flat",
-                  command=self.start_camera).pack(fill="x", pady=5)
+        self.ax_mapping.set_xlim(0, 100)
+        self.ax_mapping.set_ylim(0, 100)
 
-        tk.Button(control_card, text="Stop Camera",
-                  bg="#ff4444", relief="flat",
-                  command=self.stop_camera).pack(fill="x", pady=5)
+        self.ax_mapping.set_xticks(range(0, 101, 10))
+        self.ax_mapping.set_yticks(range(0, 101, 10))
 
-        tk.Button(control_card, text="Capture",
-                  bg="#00ffcc", relief="flat",
-                  command=self.capture_image).pack(fill="x", pady=5)
+        self.ax_mapping.grid(True)
+
+        self.fig_mapping.tight_layout()
+        self.mapping_canvas.draw()
+
+        # ===== History Graph =====
+        self.fig_history = Figure(figsize=(3.5, 2.5), dpi=100)
+        self.ax_history = self.fig_history.add_subplot(111)
+
+        self.history_canvas = FigureCanvasTkAgg(self.fig_history, analytics_card)
+        self.history_canvas.get_tk_widget().pack(fill="both", padx=10, pady=5)
+
+        # Initial History Graph (before camera starts)
+        self.ax_history.set_title("Volume History")
+        self.ax_history.set_ylim(0, 100)
+
+        self.ax_history.set_xticks(range(0, 21, 5))
+        self.ax_history.set_yticks(range(0, 101, 10))
+
+        self.ax_history.grid(True)
+
+        self.fig_history.tight_layout()
+        self.history_canvas.draw()
 
     # ========================= UI Helpers =========================
 
@@ -357,6 +393,8 @@ class GestureApp:
                 self.last_distance = int(distance)
                 self.last_volume = volume_percent
 
+                self.update_graphs()
+
                 # ===== Milestone 4 Metrics =====
 
                 response = self.metrics.update()
@@ -410,48 +448,75 @@ class GestureApp:
         self.current_frame = frame
         self.root.after(10, self.update_frame)
 
-    # ========================= Scroll =========================
-
-    def _on_mousewheel(self, event):
-        self.canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
-
-    # ========================= Graphs =========================
-
-    def show_mapping_graph(self):
+    def update_graphs(self):
 
         distance = getattr(self, "last_distance", 0)
         volume = getattr(self, "last_volume", 0)
 
-        x = list(range(0,101))
-        y = list(range(0,101))
+        # ===== Mapping Graph =====
+        self.ax_mapping.clear()
 
-        plt.figure("Distance → Volume Mapping")
+        min_d = self.volume_controller.min_dist
+        max_d = self.volume_controller.max_dist
 
-        # mapping line
-        plt.plot(x, y, label="Volume %")
+        # Normalize distance → 0–100
+        normalized_distance = int(
+            ((distance - min_d) / (max_d - min_d)) * 100
+        )
+        normalized_distance = max(0, min(100, normalized_distance))
 
-        # current point
-        plt.scatter(distance, volume, color="red", s=100, label="Current Position")
+        # Ideal linear mapping (0–100)
+        x = list(range(0, 101))
+        y = list(range(0, 101))
 
-        plt.xlabel("Distance")
-        plt.ylabel("Volume (%)")
-        plt.title("Distance to Volume Mapping")
+        self.ax_mapping.plot(x, y, label="Mapping", linewidth=2)
 
-        plt.xlim(0,100)
-        plt.ylim(0,100)
+        # Current position (normalized)
+        self.ax_mapping.scatter(
+            normalized_distance,
+            volume,
+            color="red",
+            s=80,
+            label="Current"
+        )
 
-        plt.grid(True)
-        plt.legend()
+        # Axis settings (clean 0–100 scale)
+        self.ax_mapping.set_xlim(0, 100)
+        self.ax_mapping.set_ylim(0, 100)
 
-        plt.show()
+        # Proper ticks (0,10,20,...100)
+        self.ax_mapping.set_xticks(range(0, 101, 10))
+        self.ax_mapping.set_yticks(range(0, 101, 10))
 
-    def show_history_graph(self):
+        self.ax_mapping.set_title("Distance → Volume")
+        self.ax_mapping.set_xlabel("Distance (%)")
+        self.ax_mapping.set_ylabel("Volume (%)")
+
+        self.ax_mapping.grid(True)
+        self.ax_mapping.legend()
+
+        # Fix cropped labels
+        self.fig_mapping.tight_layout()
+
+        self.mapping_canvas.draw()
+
+        # ===== History Graph =====
+        self.ax_history.clear()
+
         history = self.volume_controller.history or [0]
 
-        plt.figure("Volume History")
-        plt.bar(range(len(history)), history)
-        plt.ylim(0, 100)
-        plt.show()
+        self.ax_history.bar(range(len(history)), history)
+        self.ax_history.set_ylim(0, 100)
+        self.ax_history.set_title("Volume History")
+
+        self.fig_mapping.tight_layout()
+
+        self.history_canvas.draw()
+
+    # ========================= Scroll =========================
+
+    def _on_mousewheel(self, event):
+        self.canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
 
 
 root = tk.Tk()
