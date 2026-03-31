@@ -1,5 +1,3 @@
-from turtle import distance
-
 import cv2
 import time
 import tkinter as tk
